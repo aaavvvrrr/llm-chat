@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    container_name: flask_ai_chat
+    ports:
+      - "5000:5000"
+    volumes:
+      # Прокидываем текущую папку как /app внутри контейнера для разработки (Hot Reload)
+      # ИЛИ, для продакшена, можно оставить только маппинг базы данных:
+      # - ./chat.db:/app/chat.db
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - FLASK_DEBUG=1
+    restart: unless-stopped

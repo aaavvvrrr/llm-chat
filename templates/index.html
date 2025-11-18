@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro AI Chat</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <div class="layout">
+        <!-- Сайдбар -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <button id="new-chat-btn" class="new-chat-btn">
+                    <i class="fa-solid fa-plus"></i> New Chat
+                </button>
+            </div>
+            <div class="history-list" id="history-list">
+                <!-- Сюда загружаются чаты -->
+            </div>
+        </aside>
+
+        <!-- Основная зона -->
+        <div class="main-content">
+            <header class="chat-header">
+                <div class="model-selector-wrapper">
+                    <i class="fa-solid fa-microchip"></i>
+                    <select id="model-select" title="Choose Model">
+                        <option value="" disabled selected>Loading models...</option>
+                    </select>
+                </div>
+
+                <div class="controls">
+                    <button id="delete-chat-btn" class="icon-btn" title="Delete current chat">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </header>
+
+            <main id="chat-box" class="chat-box">
+                <div class="empty-state">
+                    <h2>AI Assistant</h2>
+                    <p>Create a new chat or select one from history.</p>
+                </div>
+            </main>
+
+            <div id="typing-indicator" class="typing-indicator hidden">
+                <span></span><span></span><span></span>
+            </div>
+
+                <footer class="chat-input-area">
+                    <!-- Контейнер для превью файла -->
+                    <div id="file-preview-container" class="file-preview hidden">
+                        <div class="file-chip">
+                            <i class="fa-solid fa-file-code"></i>
+                            <span id="file-name">code.py</span>
+                            <button id="remove-file-btn"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="input-wrapper">
+                        <!-- Скрытый инпут -->
+                        <input type="file" id="hidden-file-input" style="display: none;">
+
+                        <button id="undo-btn" class="secondary-btn" title="Undo last turn">
+                            <i class="fa-solid fa-rotate-left"></i>
+                        </button>
+
+                        <!-- Кнопка скрепки -->
+                        <button id="attach-btn" class="secondary-btn" title="Attach file (text/code)">
+                            <i class="fa-solid fa-paperclip"></i>
+                        </button>
+
+                        <textarea id="user-input" rows="1" placeholder="Type a message..."></textarea>
+
+                        <button id="send-btn" class="send-btn">
+                            <i class="fa-solid fa-arrow-up"></i>
+                        </button>
+                    </div>
+                </footer>
+        </div>
+    </div>
+
+    <!-- Модальное окно -->
+    <div id="confirm-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h3 id="modal-title">Confirm Action</h3>
+            <p id="modal-text">Are you sure?</p>
+            <div class="modal-actions">
+                <button id="modal-cancel" class="btn-cancel">Cancel</button>
+                <button id="modal-confirm" class="btn-confirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.0.0/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
