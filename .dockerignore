@@ -3,5 +3,4 @@ env/
 venv/
 .env
 .git
-.gitignore
-chat.db
+data/

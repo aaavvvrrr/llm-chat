@@ -20,7 +20,12 @@ HEADERS = {
 }
 
 # --- DATABASE HELPER ---
-DB_NAME = "chat.db"
+# Создаем папку data, если её нет
+if not os.path.exists('data'):
+    os.makedirs('data')
+
+# Меняем путь к БД
+DB_NAME = "data/chat.db" 
 
 def init_db():
     """Создает таблицы, если их нет."""
