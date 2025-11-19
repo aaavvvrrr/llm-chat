@@ -22,13 +22,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const removeFileBtn = document.getElementById('remove-file-btn');
 
     // Настройка Markdown
+    // Markdown Setup: Убираем отсюда highlight, будем делать его вручную
     marked.setOptions({
-        highlight: (code, lang) => {
-            const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-            return hljs.highlight(code, { language }).value;
-        }
+        breaks: true, // Перенос строки по Enter
+        gfm: true     // GitHub Flavored Markdown
     });
-
     // --- МОДАЛЬНОЕ ОКНО ---
     function showModal(title, text) {
         return new Promise((resolve) => {
@@ -184,16 +182,17 @@ document.addEventListener('DOMContentLoaded', () => {
         scrollToBottom();
     }
 
-    function appendMessage(role, text, modelId = null) {
+function appendMessage(role, text, modelId = null) {
         document.querySelector('.empty-state')?.remove();
         
         const div = document.createElement('div');
         div.className = `message ${role}`;
         
         const avatar = `<div class="avatar"><i class="fa-solid ${role === 'user' ? 'fa-user' : 'fa-robot'}"></i></div>`;
+        
+        // Парсим Markdown
         const contentHtml = role === 'assistant' ? marked.parse(text) : text.replace(/\n/g, '<br>');
         
-        // Создаем блок с именем модели
         let metaHtml = '';
         if (role === 'assistant' && modelId) {
             const cleanName = formatModelName(modelId);
@@ -208,10 +207,48 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
         `;
 
+        // --- ЛОГИКА ПОДСВЕТКИ И КНОПКИ COPY ---
+        // Ищем все блоки pre (контейнеры кода)
+        div.querySelectorAll('pre').forEach((pre) => {
+            // 1. Ищем код внутри и подсвечиваем
+            const codeBlock = pre.querySelector('code');
+            if (codeBlock) {
+                hljs.highlightElement(codeBlock);
+            }
+
+            // 2. Создаем кнопку копирования
+            const btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.innerHTML = '<i class="fa-regular fa-copy"></i>'; // Иконка копирования
+            btn.title = 'Copy to clipboard';
+
+            // 3. Обработчик клика
+            btn.addEventListener('click', () => {
+                const codeText = codeBlock ? codeBlock.innerText : pre.innerText;
+                
+                navigator.clipboard.writeText(codeText).then(() => {
+                    // Визуальный эффект успеха
+                    btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+                    btn.classList.add('copied');
+                    
+                    // Возвращаем иконку через 2 секунды
+                    setTimeout(() => {
+                        btn.innerHTML = '<i class="fa-regular fa-copy"></i>';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                });
+            });
+
+            // Добавляем кнопку внутрь pre
+            pre.appendChild(btn);
+        });
+
         chatBox.appendChild(div);
         scrollToBottom();
     }
-
+    
     function scrollToBottom() {
         chatBox.scrollTop = chatBox.scrollHeight;
     }
