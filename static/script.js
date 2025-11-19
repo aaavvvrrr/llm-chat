@@ -1,9 +1,9 @@
 let currentChatId = null;
-let attachedFileContent = null; // Храним текст файла
+let attachedFileContent = null;
 let attachedFileName = null;
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Elements
+    // Элементы UI
     const chatBox = document.getElementById('chat-box');
     const userInput = document.getElementById('user-input');
     const sendBtn = document.getElementById('send-btn');
@@ -14,14 +14,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteChatBtn = document.getElementById('delete-chat-btn');
     const typingIndicator = document.getElementById('typing-indicator');
     
-    // File upload elements
+    // Элементы загрузки файла
     const attachBtn = document.getElementById('attach-btn');
     const hiddenFileInput = document.getElementById('hidden-file-input');
     const filePreview = document.getElementById('file-preview-container');
     const fileNameSpan = document.getElementById('file-name');
     const removeFileBtn = document.getElementById('remove-file-btn');
 
-    // Markdown Setup
+    // Настройка Markdown
     marked.setOptions({
         highlight: (code, lang) => {
             const language = hljs.getLanguage(lang) ? lang : 'plaintext';
@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- MODAL SYSTEM ---
+    // --- МОДАЛЬНОЕ ОКНО ---
     function showModal(title, text) {
         return new Promise((resolve) => {
             const modal = document.getElementById('confirm-modal');
@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- FILE HANDLING ---
+    // --- РАБОТА С ФАЙЛАМИ ---
 
     attachBtn.onclick = () => {
         hiddenFileInput.click();
@@ -61,17 +61,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const file = e.target.files[0];
         if (!file) return;
 
-        // Проверка размера (например, до 50КБ текста, чтобы не перегрузить контекст)
         if (file.size > 50000) {
             alert("File is too large for free models context (max ~50KB).");
-            hiddenFileInput.value = ''; // сброс
+            hiddenFileInput.value = '';
             return;
         }
 
         const reader = new FileReader();
         
         reader.onload = (event) => {
-            // Проверка на бинарные символы (очень простая)
             const content = event.target.result;
             if (content.includes('\0')) {
                 alert("Binary files (images/pdf/exe) are not supported yet. Text/Code only.");
@@ -81,7 +79,6 @@ document.addEventListener('DOMContentLoaded', () => {
             attachedFileContent = content;
             attachedFileName = file.name;
             
-            // Показать UI
             fileNameSpan.innerText = file.name;
             filePreview.classList.remove('hidden');
         };
@@ -100,42 +97,51 @@ document.addEventListener('DOMContentLoaded', () => {
         filePreview.classList.add('hidden');
     };
 
-    // --- CORE FUNCTIONS ---
+    // --- ОСНОВНЫЕ ФУНКЦИИ ---
 
     async function loadModels() {
         try {
             const res = await fetch('/api/models');
             const models = await res.json();
             modelSelect.innerHTML = '';
+            
             if(models.length === 0) {
                 modelSelect.add(new Option('No free models found', ''));
                 return;
             }
+
             models.forEach(m => {
                 const name = m.name.replace(' (Free)', '');
                 modelSelect.add(new Option(name, m.id));
             });
-            
+
             const savedModel = localStorage.getItem('selected_model');
             if (savedModel && [...modelSelect.options].some(opt => opt.value === savedModel)) {
                 modelSelect.value = savedModel;
             }
+
         } catch (e) {
             console.error("Error loading models:", e);
+            modelSelect.innerHTML = '<option>Error loading models</option>';
         }
     }
 
     async function loadChatList() {
-        const res = await fetch('/api/chats');
-        const chats = await res.json();
-        historyList.innerHTML = '';
-        chats.forEach(chat => {
-            const div = document.createElement('div');
-            div.className = `history-item ${chat.id === currentChatId ? 'active' : ''}`;
-            div.innerText = chat.title || 'New Chat';
-            div.onclick = () => loadChat(chat.id);
-            historyList.appendChild(div);
-        });
+        try {
+            const res = await fetch('/api/chats');
+            const chats = await res.json();
+            historyList.innerHTML = '';
+            
+            chats.forEach(chat => {
+                const div = document.createElement('div');
+                div.className = `history-item ${chat.id === currentChatId ? 'active' : ''}`;
+                div.innerText = chat.title || 'New Chat';
+                div.onclick = () => loadChat(chat.id);
+                historyList.appendChild(div);
+            });
+        } catch (e) {
+            console.error("Error loading history:", e);
+        }
     }
 
     async function createNewChat() {
@@ -146,27 +152,62 @@ document.addEventListener('DOMContentLoaded', () => {
         loadChat(currentChatId);
     }
 
+    // Форматирование имени модели для UI
+    function formatModelName(modelId) {
+        if (!modelId) return '';
+        // Очистка имени от лишних тегов
+        let name = modelId.replace(':free', '')
+                          .replace('meta-llama/', 'Llama ')
+                          .replace('google/', 'Google ')
+                          .replace('microsoft/', 'MS ')
+                          .replace('mistralai/', 'Mistral ');
+        return name;
+    }
+
     async function loadChat(chatId) {
         currentChatId = chatId;
         loadChatList();
+        
         const res = await fetch(`/api/chats/${chatId}`);
         const messages = await res.json();
+        
         chatBox.innerHTML = '';
         if (messages.length === 0) {
-            chatBox.innerHTML = `<div class="empty-state"><h2>AI Assistant</h2><p>Start typing to begin conversation.</p></div>`;
+            chatBox.innerHTML = `
+            <div class="empty-state">
+                <h2>AI Assistant</h2>
+                <p>Start typing to begin conversation.</p>
+            </div>`;
         } else {
-            messages.forEach(msg => appendMessage(msg.role, msg.content));
+            messages.forEach(msg => appendMessage(msg.role, msg.content, msg.model));
         }
         scrollToBottom();
     }
 
-    function appendMessage(role, text) {
+    function appendMessage(role, text, modelId = null) {
         document.querySelector('.empty-state')?.remove();
+        
         const div = document.createElement('div');
         div.className = `message ${role}`;
+        
         const avatar = `<div class="avatar"><i class="fa-solid ${role === 'user' ? 'fa-user' : 'fa-robot'}"></i></div>`;
         const contentHtml = role === 'assistant' ? marked.parse(text) : text.replace(/\n/g, '<br>');
-        div.innerHTML = `${avatar}<div class="content">${contentHtml}</div>`;
+        
+        // Создаем блок с именем модели
+        let metaHtml = '';
+        if (role === 'assistant' && modelId) {
+            const cleanName = formatModelName(modelId);
+            metaHtml = `<div class="message-meta">${cleanName}</div>`;
+        }
+
+        div.innerHTML = `
+            ${avatar}
+            <div class="message-body">
+                ${metaHtml}
+                <div class="content">${contentHtml}</div>
+            </div>
+        `;
+
         chatBox.appendChild(div);
         scrollToBottom();
     }
@@ -175,37 +216,31 @@ document.addEventListener('DOMContentLoaded', () => {
         chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    // --- ACTIONS ---
+    // --- ДЕЙСТВИЯ ---
 
     async function sendMessage() {
         if (!currentChatId) await createNewChat(); 
         
         let text = userInput.value.trim();
         const model = modelSelect.value;
-        
-        // Если нет текста и нет файла - выходим
-        if (!text && !attachedFileContent) return;
 
-        // Если есть файл, формируем красивый промпт
+        if (!text && !attachedFileContent) return;
+        if (!model) {
+            alert("Please select a model first.");
+            return;
+        }
+
         if (attachedFileContent) {
             const filePrompt = `\n\n--- BEGIN FILE: ${attachedFileName} ---\n${attachedFileContent}\n--- END FILE ---\n\n`;
             text = text + filePrompt;
         }
 
-        // Очистка UI
         userInput.value = '';
         userInput.style.height = 'auto';
-        removeFileBtn.click(); // Сброс файла и скрытие превью
+        removeFileBtn.click();
         
-        // Показываем сообщение в чате (но без огромного куска кода файла для красоты, или с ним - как хочешь. Я обрежу если он огромный)
-        const displayText = attachedFileName 
-            ? text.replace(attachedFileContent, `(File content of ${attachedFileName}...)`) 
-            : text;
-            
-        // Для пользователя покажем полный текст или сокращенный? 
-        // Лучше показать user-friendly сообщение:
         if (attachedFileName) {
-            appendMessage('user', `${userInput.value.trim()} \n\n*[Attached file: ${attachedFileName}]*`);
+            appendMessage('user', `${text.split('--- BEGIN FILE')[0].trim()} \n\n*[Attached file: ${attachedFileName}]*`);
         } else {
             appendMessage('user', text);
         }
@@ -224,7 +259,8 @@ document.addEventListener('DOMContentLoaded', () => {
             typingIndicator.classList.add('hidden');
             
             if (res.ok) {
-                appendMessage('assistant', data.response);
+                // Используем модель из ответа сервера, или текущую выбранную
+                appendMessage('assistant', data.response, data.model || model);
                 loadChatList(); 
             } else {
                 appendMessage('assistant', `Error: ${data.error}`);
@@ -241,9 +277,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (confirm) {
             const res = await fetch(`/api/chats/${currentChatId}/undo`, { method: 'POST' });
             const messages = await res.json();
+            
             chatBox.innerHTML = '';
-            if (messages.length === 0) chatBox.innerHTML = `<div class="empty-state"><h2>AI Assistant</h2><p>Start typing.</p></div>`;
-            else messages.forEach(msg => appendMessage(msg.role, msg.content));
+            if (messages.length === 0) {
+                chatBox.innerHTML = `
+                <div class="empty-state">
+                    <h2>AI Assistant</h2>
+                    <p>Start typing to begin conversation.</p>
+                </div>`;
+            } else {
+                messages.forEach(msg => appendMessage(msg.role, msg.content, msg.model));
+            }
         }
     };
 
@@ -255,13 +299,19 @@ document.addEventListener('DOMContentLoaded', () => {
             currentChatId = null;
             chatBox.innerHTML = '';
             await loadChatList();
-            if (historyList.children.length > 0) historyList.children[0].click();
-            else createNewChat();
+            if (historyList.children.length > 0) {
+                historyList.children[0].click();
+            } else {
+                createNewChat();
+            }
         }
     };
 
     newChatBtn.onclick = createNewChat;
-    modelSelect.addEventListener('change', function() { localStorage.setItem('selected_model', this.value); });
+
+    modelSelect.addEventListener('change', function() {
+        localStorage.setItem('selected_model', this.value);
+    });
 
     userInput.addEventListener('input', function() {
         this.style.height = 'auto';
@@ -277,6 +327,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     sendBtn.onclick = sendMessage;
 
+    // Инициализация
     loadModels();
     loadChatList().then(() => {
         const firstChat = document.querySelector('.history-item');

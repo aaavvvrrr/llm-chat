@@ -1,6 +1,7 @@
 services:
   web:
     build: .
+    image: llm-chat
     container_name: flask_ai_chat
     ports:
       - "5000:5000"
