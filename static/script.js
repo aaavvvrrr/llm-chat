@@ -3,7 +3,7 @@ let attachedFileContent = null;
 let attachedFileName = null;
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Элементы UI
+    // --- ЭЛЕМЕНТЫ ---
     const chatBox = document.getElementById('chat-box');
     const userInput = document.getElementById('user-input');
     const sendBtn = document.getElementById('send-btn');
@@ -14,20 +14,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteChatBtn = document.getElementById('delete-chat-btn');
     const typingIndicator = document.getElementById('typing-indicator');
     
-    // Элементы загрузки файла
+    // Элементы файлов
     const attachBtn = document.getElementById('attach-btn');
     const hiddenFileInput = document.getElementById('hidden-file-input');
     const filePreview = document.getElementById('file-preview-container');
     const fileNameSpan = document.getElementById('file-name');
     const removeFileBtn = document.getElementById('remove-file-btn');
 
-    // Настройка Markdown
-    // Markdown Setup: Убираем отсюда highlight, будем делать его вручную
+    // --- НАСТРОЙКИ MARKDOWN ---
     marked.setOptions({
         breaks: true, // Перенос строки по Enter
-        gfm: true     // GitHub Flavored Markdown
+        gfm: true     // GitHub стандарты
     });
-    // --- МОДАЛЬНОЕ ОКНО ---
+
+    // --- HELPER: Рендер формул (KaTeX) ---
+    function renderMath(element) {
+        if (!window.renderMathInElement) return; // Защита если библиотека не загрузилась
+        renderMathInElement(element, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '\\(', right: '\\)', display: false},
+                {left: '(', right: ')', display: false} // Поддержка простых скобок как формул (аккуратно!)
+            ],
+            throwOnError: false
+        });
+    }
+
+    // --- HELPER: Модальное окно ---
     function showModal(title, text) {
         return new Promise((resolve) => {
             const modal = document.getElementById('confirm-modal');
@@ -49,42 +63,40 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- РАБОТА С ФАЙЛАМИ ---
+    // --- HELPER: Форматирование имени модели ---
+    function formatModelName(modelId) {
+        if (!modelId) return '';
+        return modelId.replace(':free', '')
+                      .replace('meta-llama/', 'Llama ')
+                      .replace('google/', 'Google ')
+                      .replace('microsoft/', 'MS ')
+                      .replace('mistralai/', 'Mistral ');
+    }
 
-    attachBtn.onclick = () => {
-        hiddenFileInput.click();
-    };
+    // --- РАБОТА С ФАЙЛАМИ ---
+    attachBtn.onclick = () => hiddenFileInput.click();
 
     hiddenFileInput.onchange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-
         if (file.size > 50000) {
-            alert("File is too large for free models context (max ~50KB).");
+            alert("File is too large for free models (max ~50KB).");
             hiddenFileInput.value = '';
             return;
         }
-
         const reader = new FileReader();
-        
         reader.onload = (event) => {
             const content = event.target.result;
             if (content.includes('\0')) {
-                alert("Binary files (images/pdf/exe) are not supported yet. Text/Code only.");
+                alert("Binary files are not supported. Text only.");
                 return;
             }
-            
             attachedFileContent = content;
             attachedFileName = file.name;
-            
             fileNameSpan.innerText = file.name;
             filePreview.classList.remove('hidden');
         };
-
-        reader.onerror = () => {
-            alert("Error reading file");
-        };
-
+        reader.onerror = () => alert("Error reading file");
         reader.readAsText(file);
     };
 
@@ -95,51 +107,41 @@ document.addEventListener('DOMContentLoaded', () => {
         filePreview.classList.add('hidden');
     };
 
-    // --- ОСНОВНЫЕ ФУНКЦИИ ---
+    // --- UI ЛОГИКА (Chat List & Models) ---
 
     async function loadModels() {
         try {
             const res = await fetch('/api/models');
             const models = await res.json();
             modelSelect.innerHTML = '';
-            
             if(models.length === 0) {
                 modelSelect.add(new Option('No free models found', ''));
                 return;
             }
-
             models.forEach(m => {
                 const name = m.name.replace(' (Free)', '');
                 modelSelect.add(new Option(name, m.id));
             });
-
             const savedModel = localStorage.getItem('selected_model');
             if (savedModel && [...modelSelect.options].some(opt => opt.value === savedModel)) {
                 modelSelect.value = savedModel;
             }
-
         } catch (e) {
             console.error("Error loading models:", e);
-            modelSelect.innerHTML = '<option>Error loading models</option>';
         }
     }
 
     async function loadChatList() {
-        try {
-            const res = await fetch('/api/chats');
-            const chats = await res.json();
-            historyList.innerHTML = '';
-            
-            chats.forEach(chat => {
-                const div = document.createElement('div');
-                div.className = `history-item ${chat.id === currentChatId ? 'active' : ''}`;
-                div.innerText = chat.title || 'New Chat';
-                div.onclick = () => loadChat(chat.id);
-                historyList.appendChild(div);
-            });
-        } catch (e) {
-            console.error("Error loading history:", e);
-        }
+        const res = await fetch('/api/chats');
+        const chats = await res.json();
+        historyList.innerHTML = '';
+        chats.forEach(chat => {
+            const div = document.createElement('div');
+            div.className = `history-item ${chat.id === currentChatId ? 'active' : ''}`;
+            div.innerText = chat.title || 'New Chat';
+            div.onclick = () => loadChat(chat.id);
+            historyList.appendChild(div);
+        });
     }
 
     async function createNewChat() {
@@ -150,110 +152,129 @@ document.addEventListener('DOMContentLoaded', () => {
         loadChat(currentChatId);
     }
 
-    // Форматирование имени модели для UI
-    function formatModelName(modelId) {
-        if (!modelId) return '';
-        // Очистка имени от лишних тегов
-        let name = modelId.replace(':free', '')
-                          .replace('meta-llama/', 'Llama ')
-                          .replace('google/', 'Google ')
-                          .replace('microsoft/', 'MS ')
-                          .replace('mistralai/', 'Mistral ');
-        return name;
-    }
-
     async function loadChat(chatId) {
         currentChatId = chatId;
         loadChatList();
-        
         const res = await fetch(`/api/chats/${chatId}`);
         const messages = await res.json();
-        
         chatBox.innerHTML = '';
         if (messages.length === 0) {
-            chatBox.innerHTML = `
-            <div class="empty-state">
-                <h2>AI Assistant</h2>
-                <p>Start typing to begin conversation.</p>
-            </div>`;
+            chatBox.innerHTML = `<div class="empty-state"><h2>AI Assistant</h2><p>Start typing...</p></div>`;
         } else {
             messages.forEach(msg => appendMessage(msg.role, msg.content, msg.model));
         }
         scrollToBottom();
     }
 
-function appendMessage(role, text, modelId = null) {
+    // --- ОТОБРАЖЕНИЕ СООБЩЕНИЯ (Append Message) ---
+    
+// --- ОБНОВЛЕННАЯ ФУНКЦИЯ appendMessage ---
+    function appendMessage(role, text, modelId = null, isStreaming = false) {
         document.querySelector('.empty-state')?.remove();
         
         const div = document.createElement('div');
         div.className = `message ${role}`;
         
+        // 1. СОХРАНЯЕМ СЫРОЙ MARKDOWN В АТРИБУТ (Важно!)
+        // Если это стриминг, текст пока неполный, обновим его в sendMessage
+        div.setAttribute('data-raw', text);
+        
         const avatar = `<div class="avatar"><i class="fa-solid ${role === 'user' ? 'fa-user' : 'fa-robot'}"></i></div>`;
         
-        // Парсим Markdown
-        const contentHtml = role === 'assistant' ? marked.parse(text) : text.replace(/\n/g, '<br>');
+        let contentHtml = text;
+        if (!isStreaming) {
+            contentHtml = role === 'assistant' ? marked.parse(text) : text.replace(/\n/g, '<br>');
+        }
         
-        let metaHtml = '';
-        if (role === 'assistant' && modelId) {
-            const cleanName = formatModelName(modelId);
-            metaHtml = `<div class="message-meta">${cleanName}</div>`;
+        // 2. ГЕНЕРИРУЕМ ЗАГОЛОВОК С КНОПКОЙ
+        let headerHtml = '';
+        if (role === 'assistant') {
+            const cleanName = modelId ? formatModelName(modelId) : 'AI';
+            
+            // Кнопка копирования MD
+            const copyMdBtn = `
+                <button class="md-copy-btn" title="Copy raw Markdown" onclick="copyMarkdown(this)">
+                    <i class="fa-regular fa-file-lines"></i> MD
+                </button>
+            `;
+
+            headerHtml = `
+                <div class="message-header">
+                    <span class="message-meta">${cleanName}</span>
+                    ${!isStreaming ? copyMdBtn : ''} <!-- Показываем кнопку только когда готово -->
+                </div>
+            `;
         }
 
         div.innerHTML = `
             ${avatar}
             <div class="message-body">
-                ${metaHtml}
+                ${headerHtml}
                 <div class="content">${contentHtml}</div>
             </div>
         `;
 
-        // --- ЛОГИКА ПОДСВЕТКИ И КНОПКИ COPY ---
-        // Ищем все блоки pre (контейнеры кода)
-        div.querySelectorAll('pre').forEach((pre) => {
-            // 1. Ищем код внутри и подсвечиваем
+        if (!isStreaming && role === 'assistant') {
+            applySyntaxHighlightingAndCopy(div);
+            renderMath(div.querySelector('.content'));
+        }
+
+        chatBox.appendChild(div);
+        scrollToBottom();
+        return div; 
+    }
+    
+    // --- НОВАЯ ГЛОБАЛЬНАЯ ФУНКЦИЯ ДЛЯ КОПИРОВАНИЯ ---
+    // Мы делаем её глобальной (window.), чтобы работал onclick в HTML строке выше
+    window.copyMarkdown = function(btn) {
+        // Ищем родительский message div
+        const messageDiv = btn.closest('.message');
+        const rawText = messageDiv.getAttribute('data-raw');
+        
+        if (rawText) {
+            navigator.clipboard.writeText(rawText).then(() => {
+                const originalIcon = btn.innerHTML;
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
+                setTimeout(() => {
+                    btn.innerHTML = originalIcon;
+                }, 2000);
+            });
+        }
+    };
+
+    function applySyntaxHighlightingAndCopy(parentElement) {
+        parentElement.querySelectorAll('pre').forEach((pre) => {
+            // 1. Подсветка
             const codeBlock = pre.querySelector('code');
-            if (codeBlock) {
-                hljs.highlightElement(codeBlock);
-            }
+            if (codeBlock) hljs.highlightElement(codeBlock);
 
-            // 2. Создаем кнопку копирования
-            const btn = document.createElement('button');
-            btn.className = 'copy-btn';
-            btn.innerHTML = '<i class="fa-regular fa-copy"></i>'; // Иконка копирования
-            btn.title = 'Copy to clipboard';
-
-            // 3. Обработчик клика
-            btn.addEventListener('click', () => {
-                const codeText = codeBlock ? codeBlock.innerText : pre.innerText;
+            // 2. Кнопка копирования
+            if (!pre.querySelector('.copy-btn')) { // Защита от дублей
+                const btn = document.createElement('button');
+                btn.className = 'copy-btn';
+                btn.innerHTML = '<i class="fa-regular fa-copy"></i>';
+                btn.title = 'Copy code';
                 
-                navigator.clipboard.writeText(codeText).then(() => {
-                    // Визуальный эффект успеха
+                btn.addEventListener('click', () => {
+                    const textToCopy = codeBlock ? codeBlock.innerText : pre.innerText;
+                    navigator.clipboard.writeText(textToCopy);
                     btn.innerHTML = '<i class="fa-solid fa-check"></i>';
                     btn.classList.add('copied');
-                    
-                    // Возвращаем иконку через 2 секунды
                     setTimeout(() => {
                         btn.innerHTML = '<i class="fa-regular fa-copy"></i>';
                         btn.classList.remove('copied');
                     }, 2000);
-                }).catch(err => {
-                    console.error('Failed to copy:', err);
                 });
-            });
-
-            // Добавляем кнопку внутрь pre
-            pre.appendChild(btn);
+                pre.appendChild(btn);
+            }
         });
-
-        chatBox.appendChild(div);
-        scrollToBottom();
     }
-    
+
     function scrollToBottom() {
         chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    // --- ДЕЙСТВИЯ ---
+    // --- ОТПРАВКА СООБЩЕНИЯ (STREAMING) ---
 
     async function sendMessage() {
         if (!currentChatId) await createNewChat(); 
@@ -262,66 +283,123 @@ function appendMessage(role, text, modelId = null) {
         const model = modelSelect.value;
 
         if (!text && !attachedFileContent) return;
-        if (!model) {
-            alert("Please select a model first.");
-            return;
-        }
+        if (!model) { alert("Select model"); return; }
 
+        // Добавляем файл в текст
         if (attachedFileContent) {
             const filePrompt = `\n\n--- BEGIN FILE: ${attachedFileName} ---\n${attachedFileContent}\n--- END FILE ---\n\n`;
             text = text + filePrompt;
         }
 
+        // Сброс UI
         userInput.value = '';
         userInput.style.height = 'auto';
         removeFileBtn.click();
         
-        if (attachedFileName) {
-            appendMessage('user', `${text.split('--- BEGIN FILE')[0].trim()} \n\n*[Attached file: ${attachedFileName}]*`);
-        } else {
-            appendMessage('user', text);
-        }
+        // 1. Показываем сообщение пользователя
+        const userDisplay = attachedFileName 
+            ? `${text.split('--- BEGIN FILE')[0].trim()} \n\n*[Attached file: ${attachedFileName}]*` 
+            : text;
+        appendMessage('user', userDisplay);
+        
+        // 2. Создаем "контейнер" для ответа ассистента (пустой)
+        const assistantMsgDiv = appendMessage('assistant', '', model, true);
+        const contentDiv = assistantMsgDiv.querySelector('.content');
         
         typingIndicator.classList.remove('hidden');
         scrollToBottom();
 
+        let fullText = ""; // Сюда копим ответ
+
         try {
-            const res = await fetch(`/api/chats/${currentChatId}/message`, {
+            const response = await fetch(`/api/chats/${currentChatId}/message`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ message: text, model: model })
             });
-            
-            const data = await res.json();
-            typingIndicator.classList.add('hidden');
-            
-            if (res.ok) {
-                // Используем модель из ответа сервера, или текущую выбранную
-                appendMessage('assistant', data.response, data.model || model);
-                loadChatList(); 
-            } else {
-                appendMessage('assistant', `Error: ${data.error}`);
+
+            // Читаем Stream
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value, { stream: true });
+                // Сервер шлет NDJSON. Разбиваем по строкам.
+                const lines = chunk.split('\n');
+                
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const json = JSON.parse(line);
+                        if (json.chunk) {
+                            fullText += json.chunk;
+                            // Пока стримим - просто текст (чтобы не ломать HTML разметку на лету)
+                            contentDiv.innerText = fullText;
+                            scrollToBottom();
+                        }
+                        if (json.error) {
+                            fullText += `\n[Error: ${json.error}]`;
+                            contentDiv.innerText = fullText;
+                        }
+                    } catch (e) {
+                        console.error("JSON parse error", e);
+                    }
+                }
             }
+
+            typingIndicator.classList.add('hidden');
+
+            // 3. Финализация: когда стрим кончился
+            
+            // ВАЖНО: Сохраняем полный сырой текст в атрибут
+            assistantMsgDiv.setAttribute('data-raw', fullText);
+
+            // Перерисовываем заголовок, чтобы появилась кнопка MD (так как при стриме её не было)
+            const headerDiv = assistantMsgDiv.querySelector('.message-body');
+            // Вставляем заголовок заново (немного хардкода для скорости, но работает надежно)
+            const cleanName = formatModelName(model);
+            const newHeader = `
+                <div class="message-header">
+                    <span class="message-meta">${cleanName}</span>
+                    <button class="md-copy-btn" title="Copy raw Markdown" onclick="copyMarkdown(this)">
+                        <i class="fa-regular fa-file-lines"></i> MD
+                    </button>
+                </div>
+                <div class="content"></div>
+            `;
+            
+            // Аккуратно меняем HTML, сохраняя структуру
+            headerDiv.innerHTML = newHeader;
+            const newContentDiv = headerDiv.querySelector('.content');
+            
+            // Рендерим контент
+            newContentDiv.innerHTML = marked.parse(fullText);
+            
+            applySyntaxHighlightingAndCopy(assistantMsgDiv);
+            renderMath(newContentDiv);
+            
+            loadChatList();
+
         } catch (e) {
             typingIndicator.classList.add('hidden');
-            appendMessage('assistant', `Network error: ${e}`);
+            contentDiv.innerHTML += `<br><span style="color:red">Network Error: ${e.message}</span>`;
         }
     }
 
+    // --- КНОПКИ УПРАВЛЕНИЯ ---
+
     undoBtn.onclick = async () => {
         if (!currentChatId) return;
-        const confirm = await showModal('Undo', 'Remove last question and answer?');
+        const confirm = await showModal('Undo', 'Remove last interaction?');
         if (confirm) {
             const res = await fetch(`/api/chats/${currentChatId}/undo`, { method: 'POST' });
             const messages = await res.json();
-            
             chatBox.innerHTML = '';
             if (messages.length === 0) {
-                chatBox.innerHTML = `
-                <div class="empty-state">
-                    <h2>AI Assistant</h2>
-                    <p>Start typing to begin conversation.</p>
-                </div>`;
+                chatBox.innerHTML = `<div class="empty-state"><h2>AI Assistant</h2><p>Start typing...</p></div>`;
             } else {
                 messages.forEach(msg => appendMessage(msg.role, msg.content, msg.model));
             }
@@ -336,11 +414,8 @@ function appendMessage(role, text, modelId = null) {
             currentChatId = null;
             chatBox.innerHTML = '';
             await loadChatList();
-            if (historyList.children.length > 0) {
-                historyList.children[0].click();
-            } else {
-                createNewChat();
-            }
+            if (historyList.children.length > 0) historyList.children[0].click();
+            else createNewChat();
         }
     };
 
@@ -364,7 +439,7 @@ function appendMessage(role, text, modelId = null) {
 
     sendBtn.onclick = sendMessage;
 
-    // Инициализация
+    // --- ИНИЦИАЛИЗАЦИЯ ---
     loadModels();
     loadChatList().then(() => {
         const firstChat = document.querySelector('.history-item');

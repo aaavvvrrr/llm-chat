@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import requests
+from flask import Response, stream_with_context 
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 
@@ -139,18 +140,18 @@ def delete_chat(chat_id):
 def send_message(chat_id):
     data = request.json
     user_msg = data.get('message')
-    model_id = data.get('model') # ID модели
+    model_id = data.get('model')
     
     if not user_msg or not model_id:
-        return jsonify({"error": "Message and model are required"}), 400
+        return jsonify({"error": "Required fields missing"}), 400
 
     conn = get_db_connection()
     
-    # 1. Сохраняем сообщение пользователя
+    # 1. Сохраняем сообщение юзера
     conn.execute('INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)', 
                  (chat_id, 'user', user_msg))
     
-    # Обновляем название чата, если это первое сообщение
+    # Обновляем заголовок чата, если он новый
     msg_count = conn.execute('SELECT count(*) FROM messages WHERE chat_id = ?', (chat_id,)).fetchone()[0]
     if msg_count <= 1:
         new_title = user_msg[:30] + "..." if len(user_msg) > 30 else user_msg
@@ -158,42 +159,66 @@ def send_message(chat_id):
     
     conn.commit()
 
-    # 2. Собираем контекст для API
+    # 2. Получаем контекст
     history_rows = conn.execute('SELECT role, content FROM messages WHERE chat_id = ? ORDER BY id ASC', (chat_id,)).fetchall()
-    # Для API нам нужны только role и content
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
+    conn.close() # Закрываем соединение перед стримом
 
     payload = {
         "model": model_id,
-        "messages": history
+        "messages": history,
+        "stream": True  # ВАЖНО: Включаем стриминг в API OpenRouter
     }
 
-    try:
-        response = requests.post(
-            f"{OPENROUTER_URL}/chat/completions",
-            headers=HEADERS,
-            data=json.dumps(payload),
-            timeout=60
-        )
-        
-        if response.status_code == 200:
-            ai_content = response.json()['choices'][0]['message']['content']
-            
-            # Сохраняем ответ ИИ ВМЕСТЕ С ИМЕНЕМ МОДЕЛИ
-            conn.execute('INSERT INTO messages (chat_id, role, content, model) VALUES (?, ?, ?, ?)', 
-                         (chat_id, 'assistant', ai_content, model_id))
-            conn.commit()
-            conn.close()
-            
-            # Возвращаем имя модели фронтенду
-            return jsonify({"response": ai_content, "model": model_id})
-        else:
-            conn.close()
-            return jsonify({"error": f"Provider Error: {response.text}"}), response.status_code
+    def generate():
+        full_response = []
+        try:
+            # Делаем запрос с stream=True
+            with requests.post(
+                f"{OPENROUTER_URL}/chat/completions",
+                headers=HEADERS,
+                data=json.dumps(payload),
+                timeout=60,
+                stream=True # Важно для requests
+            ) as r:
+                if r.status_code != 200:
+                    yield json.dumps({"error": f"Error: {r.text}"})
+                    return
 
-    except Exception as e:
-        conn.close()
-        return jsonify({"error": str(e)}), 500
+                # Читаем поток построчно
+                for line in r.iter_lines():
+                    if line:
+                        decoded_line = line.decode('utf-8')
+                        # OpenRouter шлет "data: {...}"
+                        if decoded_line.startswith("data: "):
+                            json_str = decoded_line[6:] # Убираем "data: "
+                            if json_str.strip() == "[DONE]":
+                                break
+                            try:
+                                chunk_json = json.loads(json_str)
+                                content = chunk_json['choices'][0]['delta'].get('content', '')
+                                if content:
+                                    full_response.append(content)
+                                    # Отправляем кусочек фронтенду
+                                    yield json.dumps({"chunk": content}) + "\n"
+                            except Exception:
+                                pass
+        except Exception as e:
+            yield json.dumps({"error": str(e)})
+
+        # 3. После завершения стрима сохраняем ПОЛНЫЙ ответ в БД
+        final_text = "".join(full_response)
+        if final_text:
+            # Открываем новое соединение, так как старое закрыто, а мы внутри генератора
+            # В Flask это допустимо, но нужно быть аккуратным с потоками. 
+            # SQLite в Python по умолчанию запрещает шаринг соединения между потоками, поэтому создаем новое.
+            with sqlite3.connect(DB_NAME) as db:
+                db.execute('INSERT INTO messages (chat_id, role, content, model) VALUES (?, ?, ?, ?)', 
+                             (chat_id, 'assistant', final_text, model_id))
+                db.commit()
+
+    return Response(stream_with_context(generate()), content_type='application/x-ndjson')
+
 
 @app.route('/api/chats/<int:chat_id>/undo', methods=['POST'])
 def undo_last(chat_id):

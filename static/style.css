@@ -187,14 +187,46 @@ select#model-select:focus {
 }
 
 /* Стиль подписи модели */
+/* Контейнер для мета-информации (Имя модели + Кнопки) */
+/* Контейнер для мета-информации (Имя модели + Кнопки) */
+.message-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between; /* <--- ГЛАВНОЕ ИЗМЕНЕНИЕ: разносит элементы по краям */
+    margin-bottom: 5px;
+    width: 100%; /* Гарантирует, что заголовок занимает всю ширину */
+}
+
+/* Имя модели */
 .message-meta {
     font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin-bottom: 5px;
-    font-weight: 500;
+    color: var(--accent);
+    font-weight: 600;
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    opacity: 0.8;
+}
+
+/* Кнопка копирования Markdown */
+.md-copy-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 2px 5px;
+    border-radius: 4px;
+    opacity: 0; /* Скрыта по умолчанию */
+    transition: opacity 0.2s, color 0.2s;
+}
+
+/* Показываем кнопку только когда наводим мышь на сообщение */
+.message:hover .md-copy-btn {
+    opacity: 1;
+}
+
+.md-copy-btn:hover {
+    color: white;
+    background: rgba(255,255,255,0.1);
 }
 
 .message.assistant .message-meta {
