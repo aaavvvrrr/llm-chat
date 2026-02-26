@@ -2,6 +2,26 @@ let currentChatId = null;
 let attachedFileContent = null;
 let attachedFileName = null;
 
+// --- HELPER: Экранирование HTML (защита от <тегов>) ---
+    function escapeHtml(text) {
+        if (!text) return text;
+        return text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+// --- HELPER: Автокоррекция LaTeX ---
+    // Превращает ( \frac{1}{2} ) в \( \frac{1}{2} \), чтобы KaTeX это увидел.
+    // Игнорирует обычный текст в скобках (текст).
+    function preprocessLaTeX(text) {
+        if (!text) return text;
+        // Регулярка ищет (...) внутри которых есть хотя бы один обратный слеш "\"
+        return text.replace(/\(([^)]*\\+[^)]*)\)/g, '\\($1\\)');
+    }    
+
 document.addEventListener('DOMContentLoaded', () => {
     // --- ЭЛЕМЕНТЫ ---
     const chatBox = document.getElementById('chat-box');
@@ -29,18 +49,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- HELPER: Рендер формул (KaTeX) ---
     function renderMath(element) {
-        if (!window.renderMathInElement) return; // Защита если библиотека не загрузилась
+        if (!window.renderMathInElement) return; 
         renderMathInElement(element, {
             delimiters: [
                 {left: '$$', right: '$$', display: true},
                 {left: '\\[', right: '\\]', display: true},
                 {left: '\\(', right: '\\)', display: false},
-                {left: '(', right: ')', display: false} // Поддержка простых скобок как формул (аккуратно!)
+                // ❌ УДАЛИ ИЛИ ЗАКОММЕНТИРУЙ СТРОКУ НИЖЕ:
+                // {left: '(', right: ')', display: false} 
             ],
             throwOnError: false
         });
     }
-
     // --- HELPER: Модальное окно ---
     function showModal(title, text) {
         return new Promise((resolve) => {
@@ -183,8 +203,13 @@ document.addEventListener('DOMContentLoaded', () => {
         
         let contentHtml = text;
         if (!isStreaming) {
-            contentHtml = role === 'assistant' ? marked.parse(text) : text.replace(/\n/g, '<br>');
-        }
+            if (role === 'assistant') {
+                contentHtml = marked.parse(preprocessLaTeX(text));
+            } else {
+                // Сначала экранируем скобки < >, потом меняем переносы строк
+                contentHtml = escapeHtml(text).replace(/\n/g, '<br>');
+            }
+        }        
         
         // 2. ГЕНЕРИРУЕМ ЗАГОЛОВОК С КНОПКОЙ
         let headerHtml = '';
