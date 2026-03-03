@@ -15,6 +15,10 @@ app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev_key")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 
+# Локальная модель llama.cpp
+LOCAL_MODEL_ID = os.getenv("LOCAL_MODEL_ID", "local/qwen3.5-27b")
+LOCAL_MODEL_URL = os.getenv("LOCAL_MODEL_URL", "http://localhost:8010")
+
 # Заголовки для OpenRouter
 HEADERS = {
     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -75,30 +79,92 @@ def index():
 
 @app.route('/api/models', methods=['GET'])
 def list_models():
-    """Получает список моделей и фильтрует только бесплатные."""
+    """Получает список моделей: локальная + бесплатные OpenRouter."""
+    models = []
+
+    # Добавляем локальную модель (всегда доступна в списке)
+    models.append({
+        "id": LOCAL_MODEL_ID,
+        "name": "Local: Qwen3.5-27B (llama.cpp)",
+        "local": True
+    })
+
+    # Пытаемся получить бесплатные модели с OpenRouter
     try:
         response = requests.get(f"{OPENROUTER_URL}/models", headers=HEADERS, timeout=10)
         if response.status_code == 200:
             data = response.json().get("data", [])
             # Фильтруем модели, содержащие ':free' в ID или имеющие нулевую стоимость
             free_models = [
-                model for model in data 
-                if ":free" in model["id"] or 
-                (float(model.get("pricing", {}).get("prompt", -1)) == 0 and 
+                model for model in data
+                if ":free" in model["id"] or
+                (float(model.get("pricing", {}).get("prompt", -1)) == 0 and
                  float(model.get("pricing", {}).get("completion", -1)) == 0)
             ]
             # Сортируем по алфавиту
             free_models.sort(key=lambda x: x["name"])
-            return jsonify(free_models)
+            models.extend(free_models)
     except Exception as e:
-        print(f"Error fetching models: {e}")
-    
+        print(f"Error fetching OpenRouter models: {e}")
+
     # Fallback список, если API не ответил
-    return jsonify([
-        {"id": "google/gemini-2.0-flash-exp:free", "name": "Google: Gemini 2.0 Flash (Free)"},
-        {"id": "meta-llama/llama-3.2-3b-instruct:free", "name": "Meta: Llama 3.2 3B (Free)"},
-        {"id": "microsoft/phi-3-medium-128k-instruct:free", "name": "Microsoft: Phi-3 Medium (Free)"},
-    ])
+    if len(models) == 1:  # Только локальная модель
+        models.extend([
+            {"id": "google/gemini-2.0-flash-exp:free", "name": "Google: Gemini 2.0 Flash (Free)"},
+            {"id": "meta-llama/llama-3.2-3b-instruct:free", "name": "Meta: Llama 3.2 3B (Free)"},
+            {"id": "microsoft/phi-3-medium-128k-instruct:free", "name": "Microsoft: Phi-3 Medium (Free)"},
+        ])
+
+    return jsonify(models)
+
+# --- LOCAL MODEL HELPER ---
+
+def check_local_model_available():
+    """Проверяет доступность локального llama-server."""
+    try:
+        response = requests.get(f"{LOCAL_MODEL_URL}/health", timeout=2)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+def stream_local_model(history):
+    """Стримит ответ от локальной llama.cpp модели."""
+    payload = {
+        "messages": history,
+        "stream": True,
+        "temperature": 0.7,
+        "max_tokens": 4096
+    }
+
+    try:
+        with requests.post(
+            f"{LOCAL_MODEL_URL}/chat/completions",
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(payload),
+            timeout=120,
+            stream=True
+        ) as r:
+            if r.status_code != 200:
+                yield json.dumps({"error": f"Local model error: {r.text}"})
+                return
+
+            for line in r.iter_lines():
+                if line:
+                    decoded_line = line.decode('utf-8')
+                    if decoded_line.startswith("data: "):
+                        json_str = decoded_line[6:]
+                        if json_str.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk_json = json.loads(json_str)
+                            content = chunk_json['choices'][0]['delta'].get('content', '')
+                            if content:
+                                yield json.dumps({"chunk": content}) + "\n"
+                        except Exception:
+                            pass
+    except Exception as e:
+        yield json.dumps({"error": f"Connection error: {str(e)}"})
 
 # --- CHAT MANAGEMENT ---
 
@@ -141,22 +207,22 @@ def send_message(chat_id):
     data = request.json
     user_msg = data.get('message')
     model_id = data.get('model')
-    
+
     if not user_msg or not model_id:
         return jsonify({"error": "Required fields missing"}), 400
 
     conn = get_db_connection()
-    
+
     # 1. Сохраняем сообщение юзера
-    conn.execute('INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)', 
+    conn.execute('INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)',
                  (chat_id, 'user', user_msg))
-    
+
     # Обновляем заголовок чата, если он новый
     msg_count = conn.execute('SELECT count(*) FROM messages WHERE chat_id = ?', (chat_id,)).fetchone()[0]
     if msg_count <= 1:
         new_title = user_msg[:30] + "..." if len(user_msg) > 30 else user_msg
         conn.execute('UPDATE chats SET title = ? WHERE id = ?', (new_title, chat_id))
-    
+
     conn.commit()
 
     # 2. Получаем контекст
@@ -164,45 +230,58 @@ def send_message(chat_id):
     history = [{"role": row["role"], "content": row["content"]} for row in history_rows]
     conn.close() # Закрываем соединение перед стримом
 
-    payload = {
-        "model": model_id,
-        "messages": history,
-        "stream": True  # ВАЖНО: Включаем стриминг в API OpenRouter
-    }
+    # Проверяем, локальная ли это модель
+    is_local = model_id == LOCAL_MODEL_ID or model_id.startswith("local/")
 
     def generate():
         full_response = []
         try:
-            # Делаем запрос с stream=True
-            with requests.post(
-                f"{OPENROUTER_URL}/chat/completions",
-                headers=HEADERS,
-                data=json.dumps(payload),
-                timeout=60,
-                stream=True # Важно для requests
-            ) as r:
-                if r.status_code != 200:
-                    yield json.dumps({"error": f"Error: {r.text}"})
-                    return
+            if is_local:
+                # Используем локальную модель
+                for chunk in stream_local_model(history):
+                    if chunk:
+                        yield chunk
+                        try:
+                            chunk_data = json.loads(chunk.strip())
+                            if "chunk" in chunk_data:
+                                full_response.append(chunk_data["chunk"])
+                            elif "error" in chunk_data:
+                                return
+                        except Exception:
+                            pass
+            else:
+                # Используем OpenRouter
+                payload = {
+                    "model": model_id,
+                    "messages": history,
+                    "stream": True
+                }
+                with requests.post(
+                    f"{OPENROUTER_URL}/chat/completions",
+                    headers=HEADERS,
+                    data=json.dumps(payload),
+                    timeout=60,
+                    stream=True
+                ) as r:
+                    if r.status_code != 200:
+                        yield json.dumps({"error": f"Error: {r.text}"})
+                        return
 
-                # Читаем поток построчно
-                for line in r.iter_lines():
-                    if line:
-                        decoded_line = line.decode('utf-8')
-                        # OpenRouter шлет "data: {...}"
-                        if decoded_line.startswith("data: "):
-                            json_str = decoded_line[6:] # Убираем "data: "
-                            if json_str.strip() == "[DONE]":
-                                break
-                            try:
-                                chunk_json = json.loads(json_str)
-                                content = chunk_json['choices'][0]['delta'].get('content', '')
-                                if content:
-                                    full_response.append(content)
-                                    # Отправляем кусочек фронтенду
-                                    yield json.dumps({"chunk": content}) + "\n"
-                            except Exception:
-                                pass
+                    for line in r.iter_lines():
+                        if line:
+                            decoded_line = line.decode('utf-8')
+                            if decoded_line.startswith("data: "):
+                                json_str = decoded_line[6:]
+                                if json_str.strip() == "[DONE]":
+                                    break
+                                try:
+                                    chunk_json = json.loads(json_str)
+                                    content = chunk_json['choices'][0]['delta'].get('content', '')
+                                    if content:
+                                        full_response.append(content)
+                                        yield json.dumps({"chunk": content}) + "\n"
+                                except Exception:
+                                    pass
         except Exception as e:
             yield json.dumps({"error": str(e)})
 
@@ -225,16 +304,34 @@ def undo_last(chat_id):
     """Удаляет последние 2 сообщения (assistant + user)"""
     conn = get_db_connection()
     last_ids = conn.execute('SELECT id FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 2', (chat_id,)).fetchall()
-    
+
     if last_ids:
         for row in last_ids:
             conn.execute('DELETE FROM messages WHERE id = ?', (row['id'],))
         conn.commit()
-        
+
     # Возвращаем обновленную историю (включая model)
     messages = conn.execute('SELECT role, content, model FROM messages WHERE chat_id = ? ORDER BY id ASC', (chat_id,)).fetchall()
     conn.close()
     return jsonify([dict(row) for row in messages])
+
+@app.route('/api/local-model/status', methods=['GET'])
+def local_model_status():
+    """Проверяет доступность локальной модели."""
+    is_available = check_local_model_available()
+    if is_available:
+        return jsonify({
+            "status": "online",
+            "model": LOCAL_MODEL_ID,
+            "url": LOCAL_MODEL_URL
+        })
+    else:
+        return jsonify({
+            "status": "offline",
+            "model": LOCAL_MODEL_ID,
+            "url": LOCAL_MODEL_URL,
+            "message": "llama-server недоступен. Запустите сервер для использования локальной модели."
+        }), 503
 
 if __name__ == '__main__':
     init_db()
