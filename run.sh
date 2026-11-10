@@ -1,1 +1,1 @@
-python app.py
+./.venv/bin/python3 -O app.py

@@ -4,7 +4,7 @@ services:
     image: llm-chat
     container_name: flask_ai_chat
     ports:
-      - "5000:5000"
+      - "9001:9001"
     volumes:
       # ❌ УДАЛЯЕМ или комментируем эту строку:
       # - .:/app

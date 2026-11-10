@@ -1,6 +1,7 @@
 let currentChatId = null;
 let attachedFileContent = null;
 let attachedFileName = null;
+const systemPromptBtn = document.getElementById('system-prompt-btn');
 
 // --- HELPER: Экранирование HTML (защита от <тегов>) ---
     function escapeHtml(text) {
@@ -413,6 +414,71 @@ document.addEventListener('DOMContentLoaded', () => {
             contentDiv.innerHTML += `<br><span style="color:red">Network Error: ${e.message}</span>`;
         }
     }
+
+    // ==================== SYSTEM PROMPT MODAL ====================
+    const systemModal = document.getElementById('system-modal');
+    const systemTextarea = document.getElementById('system-textarea');
+    const loadSystemFileBtn = document.getElementById('load-system-file-btn');
+    const systemFileInput = document.getElementById('system-file-input');
+    const systemFileNameDisplay = document.getElementById('system-file-name-display');
+    const systemCancelBtn = document.getElementById('system-cancel-btn');
+    const systemSaveBtn = document.getElementById('system-save-btn');
+
+    // Новый обработчик:
+    systemPromptBtn.onclick = async () => {
+        const res = await fetch('/api/system-prompt');
+        const data = await res.json();
+        systemTextarea.value = data.system_prompt || '';
+        systemFileNameDisplay.innerText = '';
+        systemModal.classList.remove('hidden');
+    };
+
+    // При сохранении:
+    systemSaveBtn.onclick = async () => {
+        const prompt = systemTextarea.value.trim();
+
+        await fetch('/api/system-prompt', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ system_prompt: prompt || null })
+        });
+
+        systemModal.classList.add('hidden');
+        // Опционально: показать уведомление "Глобальный промпт сохранён"
+    }; 
+
+    loadSystemFileBtn.onclick = () => systemFileInput.click();
+
+    systemFileInput.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            systemTextarea.value = ev.target.result;
+            systemFileNameDisplay.innerText = `Загружено: ${file.name}`;
+        };
+        reader.readAsText(file);
+    };
+
+    systemCancelBtn.onclick = () => {
+        systemModal.classList.add('hidden');
+        systemFileInput.value = '';
+    };
+
+    systemSaveBtn.onclick = async () => {
+        if (!currentChatId) return;
+        const prompt = systemTextarea.value.trim();
+
+        await fetch(`/api/chats/${currentChatId}/system`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ system_prompt: prompt || null })
+        });
+
+        systemModal.classList.add('hidden');
+        systemFileInput.value = '';
+        // Можно добавить уведомление, если хочешь
+    };
 
     // --- КНОПКИ УПРАВЛЕНИЯ ---
 

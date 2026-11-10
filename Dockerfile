@@ -18,8 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем весь остальной код проекта
 COPY . .
 
-# Открываем порт 5000
-EXPOSE 5000
+# Открываем порт 9001
+EXPOSE 9001
 
 # Команда запуска
 CMD ["python", "app.py"]
